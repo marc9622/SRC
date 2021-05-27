@@ -1,4 +1,6 @@
-DataDrawer dataDrawer;
+DataDrawer dataDrawer = new DataDrawer();
+Button buttonLive = new Button("Cases today", 100, 50, 190, 40, "live");
+Button buttonAll = new Button("Cases the past 5 days", 300, 50, 330, 40, "all");
 
 String whichDataSetToLoad = "live"; //Denne eksisterer kun fordi threads ikke kan bruge inputs >:(
 String whichDataSetToShow = "";
@@ -6,7 +8,7 @@ String whichDataSetToShow = "";
 boolean isLoading = false;
 String loadError = "no data";
 
-long requiredMemory = 700000000l; //Enheden er bits, og tallet svarer til 87,5 MB
+long requiredMemory = 800000000l; //Enheden er bits, og tallet svarer til 87,5 MB
 
 void setup() {
   size(1000, 500);
@@ -16,18 +18,21 @@ void setup() {
 }
 
 void draw() {
-  background(0);  
-  drawData();
+  background(0);
+  if(!dataDrawer.isEmpty)
+    drawData();
+  buttonLive.display();
+  buttonAll.display();
   if(loadError != null)
-    drawError(loadError);
+    dataDrawer.drawError(loadError);
   if(isLoading)
-    drawLoading();
+    dataDrawer.drawLoading();
 }
 
 void loadData() {  
   if(!isLoading) {
     isLoading = true;
-    dataDrawer = new DataDrawer(getData());
+    dataDrawer.updateData(getData());
     whichDataSetToShow = whichDataSetToLoad;
   
     if(!dataDrawer.isEmpty) {
@@ -43,7 +48,8 @@ Table getData() { //https://github.com/nytimes/covid-19-data
     switch(whichDataSetToLoad) {
       case "live": {
         Table rawTable = loadTable("https://raw.githubusercontent.com/nytimes/covid-19-data/master/live/us-counties.csv", "header");
-        return getRelevantData(rawTable);
+        getRelevantData(rawTable);
+        return rawTable;
       }
       case "all": {
         if(!isEnoughMemory()) {
@@ -52,7 +58,9 @@ Table getData() { //https://github.com/nytimes/covid-19-data
           return null;
         }
         Table rawTable = loadTable("https://raw.githubusercontent.com/nytimes/covid-19-data/master/us-counties.csv", "header");
-        return getRelevantData(rawTable);
+        rawTable = getRelevantData(rawTable);
+        addGrowth(rawTable);
+        return rawTable;
       }
       default: {
         loadError = "no data";
@@ -63,13 +71,13 @@ Table getData() { //https://github.com/nytimes/covid-19-data
   catch(Exception e) {
     isLoading = false;
     loadError = "connection";
+    println(e);
     return null;
   }
 }
 
 Table getRelevantData(Table rawTable) {
   Table tempTable = new Table();
-
   for(TableRow row : rawTable.findRows("New York", "state"))
     tempTable.addRow(row);
   for(int i = 0; i < rawTable.getColumnCount(); i++)
@@ -77,13 +85,33 @@ Table getRelevantData(Table rawTable) {
   return removeColumnsExcept(tempTable, new StringList("date", "county", "cases"));
 }
 
-Table removeColumnsExcept(Table table, StringList titlesToRemove) {
+void addGrowth(Table table) {
+  table.addColumn("growth");
+  table.setColumnType("cases", "int");
+  int count = table.getRowCount();
+  for(int i = 0; i < count; i++) {
+    if((i > 58 && i <= 58 * 5) || i >= 58 * 6)
+      table.removeRow(count - i - 1);
+  }
+  for(int i = 58 * 2 - 1; i >= 0; i--) {
+    if(i < 58) {
+      table.removeRow(i);
+      continue;
+    }
+    int oldCases = table.getInt(i - 58, "cases");
+    int newCases = table.getInt(i, "cases");
+    float percentChange = (float)(newCases - oldCases) / oldCases * 10000f;
+    table.setInt(i, "growth", round(percentChange));
+  }
+}
+
+Table removeColumnsExcept(Table table, StringList titlesToKeep) {
   String[] columnTitles = table.getColumnTitles();
   boolean shouldKeep = false;
   for(String titleInTable : columnTitles) {
-    for(int i = 0; i < titlesToRemove.size(); i++) {
-      if(titleInTable.equals(titlesToRemove.get(i))) {
-        titlesToRemove.remove(i);
+    for(int i = 0; i < titlesToKeep.size(); i++) {
+      if(titleInTable.equals(titlesToKeep.get(i))) {
+        titlesToKeep.remove(i);
         shouldKeep = true;
         break;
       }
@@ -119,42 +147,6 @@ void drawData() {
     }
 }
 
-void drawLoading() {
-  int dotsAmount = round(frameCount % 100) / 17;
-  String dots = "";
-  for(int i = 0; i < dotsAmount; i++)
-    dots += '.';
-  
-  fill(0, 0, 0, 200);
-  rect(0, 0, width, height);
-  textAlign(LEFT);
-  textSize(50);
-  fill(255);
-  text("Loading" + dots, width/2 - 100, height/2);
-}
-
-void drawError(String errorType) {
-  textAlign(CENTER);
-  textSize(50);
-  fill(255);
-  text("Could not show data :(", width/2, height/2);
-  textSize(30);
-  switch(errorType) {
-    case "connection": {
-      text("Please ensure you have a stable internet connection.\nPress r to attempt load again.", width/2, height/2 + 60);
-      break;
-    }
-    case "memory": {
-      text("Please ensure you have enough available memory.\nPress r to attempt load again.", width/2, height/2 + 60);
-      break;
-    }
-    case "no data": {
-      text("Please ensure you have selected a valid data set.\nPress r to attempt load again.", width/2, height/2 + 60);
-      break;
-    }
-  }
-}
-
 void printTable(Table table) {
   String columnTitles = "";
   
@@ -176,10 +168,16 @@ void printTable(Table table) {
 void keyPressed() {
   if(key == 'r')
     thread("loadData");
+  
   if(dataDrawer != null) {
     if(keyCode == UP)
       dataDrawer.scroll(true);
     if(keyCode == DOWN)
       dataDrawer.scroll(false);
   }
+}
+
+void mouseClicked() {
+  buttonLive.detectClick();
+  buttonAll.detectClick();
 }
